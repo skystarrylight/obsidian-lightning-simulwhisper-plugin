@@ -2,7 +2,11 @@
 
 정본 브리지 서버 위치다.
 
-## 실행
+## 실행 순서
+
+1. Lightning-SimulWhisper 설치
+2. 엔진 단독 실행 확인
+3. 아래 명령으로 bridge server 실행
 
 ```bash
 pip install -r packages/bridge-server/requirements.txt
@@ -15,8 +19,4 @@ uvicorn packages.bridge-server.app:app --host 127.0.0.1 --port 8765 --reload
 - `GET /health`
 - `POST /v1/transcriptions`
 
-## 목적
-
-- Obsidian 플러그인이 호출하는 canonical bridge
-- Lightning-SimulWhisper subprocess 실행
-- stdout/json 결과 정규화
+자세한 전체 절차는 `docs/quick-start.md`를 본다.

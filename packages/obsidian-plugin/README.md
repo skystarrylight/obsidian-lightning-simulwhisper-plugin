@@ -2,13 +2,6 @@
 
 정본 Obsidian 플러그인 위치다.
 
-## 개념
-
-- 전사는 하나의 공통 파이프라인으로 처리
-- 문서 전략은 템플릿 모드로 처리
-- built-in template: `meeting`, `raw`, `interview`
-- custom template file path 지원
-
 ## 설치
 
 아래 파일을 Vault에 복사한다.
@@ -20,6 +13,14 @@
   - styles.css
   - versions.json
 ```
+
+## 전제 조건
+
+- Lightning-SimulWhisper 설치 완료
+- 엔진 단독 실행 확인 완료
+- bridge server 실행 완료
+
+자세한 절차는 `docs/quick-start.md`를 본다.
 
 ## 주요 설정
 

@@ -1,0 +1,10 @@
+{
+  "id": "lightning-simulwhisper-meeting-notes",
+  "name": "Lightning SimulWhisper Meeting Notes",
+  "version": "0.2.0",
+  "minAppVersion": "1.5.0",
+  "description": "Transcribe Obsidian audio files through a local Lightning-SimulWhisper bridge and create meeting note templates.",
+  "author": "OpenAI",
+  "authorUrl": "https://openai.com",
+  "isDesktopOnly": true
+}

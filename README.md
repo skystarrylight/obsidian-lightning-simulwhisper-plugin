@@ -1,84 +1,79 @@
 # Obsidian Lightning-SimulWhisper Plugin
 
-Obsidian desktop plugin for transcribing vault audio files through a local bridge server powered by `Lightning-SimulWhisper`.
+이 저장소의 정본 구조는 **template-driven 단일 Obsidian 플러그인 + canonical bridge server + templates** 기준이다.
 
-## What this plugin does
+## Start here
 
-- Select an audio file from your Obsidian vault and transcribe it
-- Extract the first linked audio file from the active note and transcribe it
-- Append the result into the active note or create a separate Markdown note
-- Check whether the local bridge server is reachable before running large jobs
+처음 시작할 때는 아래 세 경로만 보면 된다.
 
-## Why a bridge server
+- `packages/obsidian-plugin/`
+- `packages/bridge-server/`
+- `templates/`
 
-This plugin does not run `Lightning-SimulWhisper` inside Obsidian directly.
-
-Instead, it uploads the chosen audio file to a local bridge server. That bridge server is responsible for calling `Lightning-SimulWhisper` in CLI mode or server mode and returning a normalized JSON response.
-
-This keeps the plugin simpler and makes the engine layer replaceable.
-
-## Expected bridge API
-
-### `GET /health`
-
-```json
-{ "status": "ok" }
-```
-
-### `POST /v1/transcriptions`
-
-Multipart form fields:
-
-- `file`: audio binary
-- `language`: `ko`, `en`, or `auto`
-- `model`: model name
-- `prompt`: optional
-
-Response example:
-
-```json
-{
-  "text": "transcribed text",
-  "language": "ko",
-  "segments": [],
-  "metadata": {
-    "engine": "lightning-simulwhisper",
-    "model": "medium"
-  }
-}
-```
-
-## Development
-
-```bash
-npm install
-npm run build
-```
-
-Copy these files into your test vault:
-
-- `main.js`
-- `manifest.json`
-- `styles.css`
-
-Target path:
+## Canonical structure
 
 ```text
-<YourVault>/.obsidian/plugins/lightning-simulwhisper/
+root
+├─ docs/
+├─ packages/
+│  ├─ obsidian-plugin/
+│  └─ bridge-server/
+├─ templates/
+└─ legacy/
 ```
 
-## Commands
+## Recommended flow
 
-- **Check bridge server health**
-- **Transcribe audio file from vault**
-- **Transcribe linked audio in active note**
+### 1. Bridge server 준비
 
-## Notes
+```bash
+pip install -r packages/bridge-server/requirements.txt
+export LIGHTNING_SIMULWHISPER_DIR=/absolute/path/to/Lightning-SimulWhisper
+uvicorn packages.bridge-server.app:app --host 127.0.0.1 --port 8765 --reload
+```
 
-- Desktop only
-- Best paired with Apple Silicon and a local `Lightning-SimulWhisper` bridge
+### 2. Obsidian plugin 설치
 
-## Repo docs
+아래 파일을 Vault에 복사한다.
 
-- `docs/design.md`
-- `docs/quick-guide.md`
+```text
+<Vault>/.obsidian/plugins/lightning-simulwhisper-template-driven/
+  - main.js
+  - manifest.json
+  - styles.css
+  - versions.json
+```
+
+복사 원본 경로:
+
+```text
+packages/obsidian-plugin/
+```
+
+### 3. Template 선택
+
+샘플 템플릿:
+
+- `templates/raw-transcription.sample.md`
+- `templates/meeting-note.sample.md`
+- `templates/interview-note.sample.md`
+
+플러그인 설정에서 `templateMode`를 `meeting`, `raw`, `interview`, `custom` 중 하나로 선택한다.
+
+## Canonical docs
+
+- `docs/refactoring-plan.md`
+- `docs/recommended-template-driven-architecture.md`
+- `docs/quick-start.md`
+- `packages/obsidian-plugin/README.md`
+- `packages/bridge-server/README.md`
+
+## Legacy notice
+
+초기 실험 과정에서 만들어진 root 실행 파일, `examples/`, `release/` 하위 파일은 더 이상 정본이 아니며 legacy 취급한다.
+
+새 작업과 신규 검토는 아래 경로를 기준으로 진행한다.
+
+- `packages/obsidian-plugin/`
+- `packages/bridge-server/`
+- `templates/`

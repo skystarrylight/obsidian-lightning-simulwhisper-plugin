@@ -18,7 +18,7 @@ root
 - 문서 출력 전략은 템플릿으로 처리한다.
 - Obsidian 플러그인은 템플릿 모드와 커스텀 템플릿 파일 경로를 지원한다.
 - 브리지 서버는 canonical subprocess 예제 하나를 기준으로 유지한다.
-- 기존 root, release, examples 하위 산출물은 점진적으로 legacy 취급한다.
+- 기존 root, release, examples 하위 산출물은 legacy 취급한다.
 
 ## packages/obsidian-plugin 역할
 

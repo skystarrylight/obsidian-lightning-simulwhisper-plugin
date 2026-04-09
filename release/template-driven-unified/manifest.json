@@ -1,0 +1,10 @@
+{
+  "id": "lightning-simulwhisper-template-driven",
+  "name": "Lightning SimulWhisper Template Driven",
+  "version": "0.3.0",
+  "minAppVersion": "1.5.0",
+  "description": "Transcribe audio files through a local Lightning-SimulWhisper bridge and render notes through templates.",
+  "author": "OpenAI",
+  "authorUrl": "https://openai.com",
+  "isDesktopOnly": true
+}

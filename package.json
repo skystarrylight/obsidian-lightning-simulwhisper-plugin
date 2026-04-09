@@ -1,0 +1,13 @@
+{
+  "name": "obsidian-lightning-simulwhisper-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Obsidian plugin for local transcription through a Lightning-SimulWhisper bridge server",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"No automated tests configured yet\""
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

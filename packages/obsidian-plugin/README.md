@@ -4,20 +4,14 @@
 
 ## 설치
 
-아래 파일을 Vault에 복사한다.
-
-```text
-<Vault>/.obsidian/plugins/lightning-simulwhisper-template-driven/
-  - main.js
-  - manifest.json
-  - styles.css
-  - versions.json
+```bash
+export OBSIDIAN_VAULT=/absolute/path/to/YourVault
+make plugin-install
 ```
 
 ## 전제 조건
 
 - Lightning-SimulWhisper 설치 완료
-- 엔진 단독 실행 확인 완료
 - bridge server 실행 완료
 
 자세한 절차는 `docs/quick-start.md`를 본다.

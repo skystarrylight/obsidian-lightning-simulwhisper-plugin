@@ -14,6 +14,8 @@
 
 ```text
 root
+├─ README.md
+├─ Makefile
 ├─ docs/
 ├─ packages/
 │  ├─ obsidian-plugin/
@@ -24,41 +26,31 @@ root
 
 ## Recommended flow
 
-### 1. Bridge server 준비
+### 1. uv 기반 bridge server 준비
 
 ```bash
-pip install -r packages/bridge-server/requirements.txt
+make bridge-venv
+```
+
+### 2. Lightning-SimulWhisper 경로 설정 후 bridge server 실행
+
+```bash
 export LIGHTNING_SIMULWHISPER_DIR=/absolute/path/to/Lightning-SimulWhisper
-uvicorn packages.bridge-server.app:app --host 127.0.0.1 --port 8765 --reload
+make bridge-run
 ```
 
-### 2. Obsidian plugin 설치
+### 3. Obsidian plugin 설치
 
-아래 파일을 Vault에 복사한다.
-
-```text
-<Vault>/.obsidian/plugins/lightning-simulwhisper-template-driven/
-  - main.js
-  - manifest.json
-  - styles.css
-  - versions.json
+```bash
+export OBSIDIAN_VAULT=/absolute/path/to/YourVault
+make plugin-install
 ```
 
-복사 원본 경로:
+### 4. 샘플 템플릿 복사
 
-```text
-packages/obsidian-plugin/
+```bash
+make template-install
 ```
-
-### 3. Template 선택
-
-샘플 템플릿:
-
-- `templates/raw-transcription.sample.md`
-- `templates/meeting-note.sample.md`
-- `templates/interview-note.sample.md`
-
-플러그인 설정에서 `templateMode`를 `meeting`, `raw`, `interview`, `custom` 중 하나로 선택한다.
 
 ## Canonical docs
 
@@ -67,6 +59,14 @@ packages/obsidian-plugin/
 - `docs/quick-start.md`
 - `packages/obsidian-plugin/README.md`
 - `packages/bridge-server/README.md`
+
+## Makefile targets
+
+- `make bridge-venv`
+- `make bridge-run`
+- `make bridge-health`
+- `make plugin-install`
+- `make template-install`
 
 ## Legacy notice
 

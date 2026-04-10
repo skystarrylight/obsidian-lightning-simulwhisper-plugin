@@ -7,11 +7,15 @@ const DEFAULT_SETTINGS = {
   prompt: '',
   requestTimeoutMs: 120000,
   outputFolder: 'Generated Notes',
+  recordingNoteOutputFolder: 'Generated Notes/Recorded Sessions',
   templateMode: 'meeting',
   customTemplateFilePath: 'Templates/custom-template.md',
   openCreatedNote: true,
   fallbackRawHeading: '## 원문 전사',
   fileNamePattern: '{{date}} {{audio_base}}',
+  recordingFolder: 'Recordings',
+  autoGenerateNoteAfterRecording: true,
+  recordingFileNamePattern: '{{date}} {{time}} recording',
 };
 
 const AUDIO_EXTENSIONS = new Set(['mp3','wav','m4a','mp4','mpeg','mpga','webm','ogg','flac','aac','opus']);
@@ -31,6 +35,14 @@ class AudioFileSuggestModal extends FuzzySuggestModal {
 module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
+    this.mediaRecorder = null;
+    this.recordedChunks = [];
+    this.recordingStream = null;
+    this.recordingStartedAt = null;
+    this.recordingTimerId = null;
+    this.statusBarEl = this.addStatusBarItem();
+    this.updateRecordingStatusBar();
+
     this.addSettingTab(new TemplateDrivenSettingTab(this.app, this));
 
     this.addCommand({
@@ -74,6 +86,39 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
         await this.generateDocumentFromAudio(file);
       },
     });
+
+    this.addCommand({
+      id: 'start-microphone-recording',
+      name: 'Start microphone recording',
+      callback: async () => {
+        await this.startRecording();
+      },
+    });
+
+    this.addCommand({
+      id: 'stop-microphone-recording',
+      name: 'Stop microphone recording',
+      callback: async () => {
+        await this.stopRecording();
+      },
+    });
+
+    this.addCommand({
+      id: 'toggle-microphone-recording',
+      name: 'Toggle microphone recording',
+      callback: async () => {
+        if (this.isRecording()) {
+          await this.stopRecording();
+        } else {
+          await this.startRecording();
+        }
+      },
+    });
+  }
+
+  onunload() {
+    this.clearRecordingTimer();
+    this.stopRecordingTracks();
   }
 
   async loadSettings() {
@@ -82,6 +127,188 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
 
   async saveSettings() {
     await this.saveData(this.settings);
+  }
+
+  isRecording() {
+    return !!this.mediaRecorder && this.mediaRecorder.state === 'recording';
+  }
+
+  updateRecordingStatusBar() {
+    if (!this.statusBarEl) return;
+    if (!this.isRecording() || !this.recordingStartedAt) {
+      this.statusBarEl.setText('Mic idle');
+      return;
+    }
+    const elapsedSec = Math.max(0, Math.floor((Date.now() - this.recordingStartedAt) / 1000));
+    const mm = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
+    const ss = String(elapsedSec % 60).padStart(2, '0');
+    this.statusBarEl.setText(`● Recording ${mm}:${ss}`);
+  }
+
+  startRecordingTimer() {
+    this.clearRecordingTimer();
+    this.recordingTimerId = window.setInterval(() => this.updateRecordingStatusBar(), 1000);
+  }
+
+  clearRecordingTimer() {
+    if (this.recordingTimerId) {
+      window.clearInterval(this.recordingTimerId);
+      this.recordingTimerId = null;
+    }
+  }
+
+  stopRecordingTracks() {
+    if (this.recordingStream) {
+      for (const track of this.recordingStream.getTracks()) {
+        try {
+          track.stop();
+        } catch (error) {
+          console.error(error);
+        }
+      }
+    }
+    this.recordingStream = null;
+  }
+
+  getSupportedRecordingMimeType() {
+    const candidates = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/ogg;codecs=opus',
+      'audio/ogg',
+      'audio/mp4',
+    ];
+    if (typeof MediaRecorder === 'undefined') return '';
+    for (const candidate of candidates) {
+      if (MediaRecorder.isTypeSupported(candidate)) return candidate;
+    }
+    return '';
+  }
+
+  getExtensionForMimeType(mimeType) {
+    if (!mimeType) return 'webm';
+    if (mimeType.includes('ogg')) return 'ogg';
+    if (mimeType.includes('mp4')) return 'm4a';
+    return 'webm';
+  }
+
+  async startRecording() {
+    if (this.isRecording()) {
+      new Notice('Recording is already in progress.');
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      new Notice('Microphone recording is not supported in this environment.');
+      return;
+    }
+
+    try {
+      this.recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = this.getSupportedRecordingMimeType();
+      const options = mimeType ? { mimeType } : undefined;
+      this.recordedChunks = [];
+      this.mediaRecorder = new MediaRecorder(this.recordingStream, options);
+      this.mediaRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          this.recordedChunks.push(event.data);
+        }
+      };
+      this.mediaRecorder.onerror = (event) => {
+        console.error(event);
+        new Notice('Recording error occurred. See console for details.');
+      };
+      this.mediaRecorder.start();
+      this.recordingStartedAt = Date.now();
+      this.startRecordingTimer();
+      this.updateRecordingStatusBar();
+      new Notice('Microphone recording started.');
+    } catch (error) {
+      console.error(error);
+      this.stopRecordingTracks();
+      this.mediaRecorder = null;
+      this.recordedChunks = [];
+      this.recordingStartedAt = null;
+      this.clearRecordingTimer();
+      this.updateRecordingStatusBar();
+      new Notice(`Failed to start microphone recording: ${error.message}`);
+    }
+  }
+
+  async stopRecording() {
+    if (!this.isRecording()) {
+      new Notice('No active recording.');
+      return;
+    }
+
+    const recorder = this.mediaRecorder;
+    await new Promise((resolve, reject) => {
+      recorder.onstop = resolve;
+      recorder.onerror = reject;
+      recorder.stop();
+    }).catch((error) => {
+      console.error(error);
+      new Notice(`Failed to stop recording: ${error.message}`);
+    });
+
+    this.clearRecordingTimer();
+    this.stopRecordingTracks();
+    this.mediaRecorder = null;
+    this.updateRecordingStatusBar();
+
+    try {
+      const mimeType = recorder.mimeType || this.getSupportedRecordingMimeType() || 'audio/webm';
+      const blob = new Blob(this.recordedChunks, { type: mimeType });
+      this.recordedChunks = [];
+      const audioFile = await this.saveRecordingBlob(blob, mimeType);
+      this.recordingStartedAt = null;
+      new Notice(`Recording saved: ${audioFile.path}`);
+      if (this.settings.autoGenerateNoteAfterRecording) {
+        await this.generateDocumentFromAudio(audioFile, { trigger: 'recording' });
+      }
+    } catch (error) {
+      console.error(error);
+      new Notice(`Failed to save recording: ${error.message}`);
+    } finally {
+      this.recordingStartedAt = null;
+      this.updateRecordingStatusBar();
+    }
+  }
+
+  async saveRecordingBlob(blob, mimeType) {
+    const folderPath = (this.settings.recordingFolder || 'Recordings').trim();
+    await this.ensureFolderExists(folderPath);
+    const now = new Date();
+    const context = {
+      date: this.formatDate(now),
+      time: this.formatTime(now),
+      datetime: this.formatDateTime(now),
+    };
+    const baseName = this.renderRecordingFileNamePattern(context).replace(/[^a-zA-Z0-9가-힣._ -]/g, '_');
+    const ext = this.getExtensionForMimeType(mimeType);
+    const path = this.getAvailableBinaryPath(`${folderPath}/${baseName}.${ext}`);
+    const arrayBuffer = await blob.arrayBuffer();
+    return await this.app.vault.createBinary(path, arrayBuffer);
+  }
+
+  renderRecordingFileNamePattern(context) {
+    let output = this.settings.recordingFileNamePattern || '{{date}} {{time}} recording';
+    for (const [key, value] of Object.entries(context)) {
+      output = output.split(`{{${key}}}`).join(String(value ?? ''));
+    }
+    return output.trim();
+  }
+
+  getAvailableBinaryPath(initialPath) {
+    if (!this.app.vault.getAbstractFileByPath(initialPath)) return initialPath;
+    const dot = initialPath.lastIndexOf('.');
+    const base = dot >= 0 ? initialPath.slice(0, dot) : initialPath;
+    const ext = dot >= 0 ? initialPath.slice(dot) : '';
+    let index = 2;
+    while (true) {
+      const candidate = `${base} ${index}${ext}`;
+      if (!this.app.vault.getAbstractFileByPath(candidate)) return candidate;
+      index += 1;
+    }
   }
 
   getAudioFiles() {
@@ -117,7 +344,7 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
     }
   }
 
-  async generateDocumentFromAudio(file) {
+  async generateDocumentFromAudio(file, options = {}) {
     new Notice(`Generating note from: ${file.path}`);
     try {
       const arrayBuffer = await this.app.vault.readBinary(file);
@@ -125,7 +352,8 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
       const context = this.buildTemplateContext(file, transcription);
       const template = await this.resolveTemplateContent();
       const rendered = this.renderTemplate(template, context);
-      const notePath = await this.createOutputNote(file, rendered, context);
+      const outputFolder = this.resolveOutputFolder(options);
+      const notePath = await this.createOutputNote(file, rendered, context, outputFolder);
       if (this.settings.openCreatedNote) {
         const created = this.app.vault.getAbstractFileByPath(notePath);
         if (created instanceof TFile) {
@@ -137,6 +365,13 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
       console.error(error);
       new Notice(`Note generation failed: ${error.message}`);
     }
+  }
+
+  resolveOutputFolder(options = {}) {
+    if (options.trigger === 'recording') {
+      return (this.settings.recordingNoteOutputFolder || this.settings.outputFolder || 'Generated Notes').trim();
+    }
+    return (this.settings.outputFolder || 'Generated Notes').trim();
   }
 
   async requestTranscription(file, arrayBuffer) {
@@ -274,8 +509,8 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
     return output.trimEnd() + '\n';
   }
 
-  async createOutputNote(sourceFile, content, context) {
-    const folderPath = (this.settings.outputFolder || 'Generated Notes').trim();
+  async createOutputNote(sourceFile, content, context, folderPathOverride = null) {
+    const folderPath = (folderPathOverride || this.settings.outputFolder || 'Generated Notes').trim();
     await this.ensureFolderExists(folderPath);
     const fileNameBase = this.renderFileNamePattern(context);
     const safeBase = fileNameBase.replace(/[^a-zA-Z0-9가-힣._ -]/g, '_');
@@ -297,6 +532,13 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
     const m = String(now.getMonth() + 1).padStart(2, '0');
     const d = String(now.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
+  }
+
+  formatTime(now) {
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const ss = String(now.getSeconds()).padStart(2, '0');
+    return `${hh}-${mm}-${ss}`;
   }
 
   formatDateTime(now) {
@@ -343,7 +585,7 @@ class TemplateDrivenSettingTab extends PluginSettingTab {
     containerEl.empty();
     containerEl.createEl('h2', { text: 'Template Driven Settings' });
     containerEl.createEl('p', {
-      text: 'Use one transcription pipeline and generate different markdown documents by template mode.',
+      text: 'Use one transcription pipeline, microphone recording, and template-driven markdown generation.',
       cls: 'lightning-simulwhisper-setting-note',
     });
 
@@ -352,8 +594,12 @@ class TemplateDrivenSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName('Model').setDesc('Model name forwarded to the bridge server').addText((text) => text.setValue(this.plugin.settings.model).onChange(async (value) => { this.plugin.settings.model = value.trim() || DEFAULT_SETTINGS.model; await this.plugin.saveSettings(); }));
     new Setting(containerEl).setName('Template mode').setDesc('Built-in raw, meeting, interview, or custom template file').addDropdown((dropdown) => dropdown.addOption('meeting', 'Meeting').addOption('raw', 'Raw').addOption('interview', 'Interview').addOption('custom', 'Custom').setValue(this.plugin.settings.templateMode).onChange(async (value) => { this.plugin.settings.templateMode = value; await this.plugin.saveSettings(); }));
     new Setting(containerEl).setName('Custom template file path').setDesc('Used when template mode is Custom').addText((text) => text.setValue(this.plugin.settings.customTemplateFilePath).onChange(async (value) => { this.plugin.settings.customTemplateFilePath = value.trim() || DEFAULT_SETTINGS.customTemplateFilePath; await this.plugin.saveSettings(); }));
-    new Setting(containerEl).setName('Output folder').setDesc('Folder where generated markdown notes are created').addText((text) => text.setValue(this.plugin.settings.outputFolder).onChange(async (value) => { this.plugin.settings.outputFolder = value.trim() || DEFAULT_SETTINGS.outputFolder; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName('Output folder').setDesc('Folder for notes generated from existing audio files').addText((text) => text.setValue(this.plugin.settings.outputFolder).onChange(async (value) => { this.plugin.settings.outputFolder = value.trim() || DEFAULT_SETTINGS.outputFolder; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName('Recording note output folder').setDesc('Folder for template-based notes generated after microphone recording stops').addText((text) => text.setValue(this.plugin.settings.recordingNoteOutputFolder).onChange(async (value) => { this.plugin.settings.recordingNoteOutputFolder = value.trim() || DEFAULT_SETTINGS.recordingNoteOutputFolder; await this.plugin.saveSettings(); }));
     new Setting(containerEl).setName('File name pattern').setDesc('Example: {{date}} {{audio_base}}').addText((text) => text.setValue(this.plugin.settings.fileNamePattern).onChange(async (value) => { this.plugin.settings.fileNamePattern = value || DEFAULT_SETTINGS.fileNamePattern; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName('Recording folder').setDesc('Vault folder where recorded audio files are saved').addText((text) => text.setValue(this.plugin.settings.recordingFolder).onChange(async (value) => { this.plugin.settings.recordingFolder = value.trim() || DEFAULT_SETTINGS.recordingFolder; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName('Recording file name pattern').setDesc('Example: {{date}} {{time}} recording').addText((text) => text.setValue(this.plugin.settings.recordingFileNamePattern).onChange(async (value) => { this.plugin.settings.recordingFileNamePattern = value || DEFAULT_SETTINGS.recordingFileNamePattern; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName('Auto generate note after recording').setDesc('Automatically transcribe and create note when recording stops').addToggle((toggle) => toggle.setValue(!!this.plugin.settings.autoGenerateNoteAfterRecording).onChange(async (value) => { this.plugin.settings.autoGenerateNoteAfterRecording = !!value; await this.plugin.saveSettings(); }));
     new Setting(containerEl).setName('Open created note').setDesc('Open generated note after creation').addToggle((toggle) => toggle.setValue(!!this.plugin.settings.openCreatedNote).onChange(async (value) => { this.plugin.settings.openCreatedNote = !!value; await this.plugin.saveSettings(); }));
     new Setting(containerEl).setName('Prompt').setDesc('Optional prompt sent with transcription request').addTextArea((text) => text.setValue(this.plugin.settings.prompt).onChange(async (value) => { this.plugin.settings.prompt = value; await this.plugin.saveSettings(); }));
     new Setting(containerEl).setName('Request timeout (ms)').setDesc('Timeout for upload and transcription request').addText((text) => text.setValue(String(this.plugin.settings.requestTimeoutMs)).onChange(async (value) => { const parsed = Number(value); this.plugin.settings.requestTimeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SETTINGS.requestTimeoutMs; await this.plugin.saveSettings(); }));

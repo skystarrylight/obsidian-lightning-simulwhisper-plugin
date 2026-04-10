@@ -1,4 +1,4 @@
-const { Plugin, PluginSettingTab, Setting, Notice, FuzzySuggestModal, TFile } = require('obsidian');
+const { Plugin, PluginSettingTab, Setting, Notice, FuzzySuggestModal, TFile, setIcon } = require('obsidian');
 
 const DEFAULT_SETTINGS = {
   serverUrl: 'http://127.0.0.1:8765',
@@ -41,7 +41,10 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
     this.recordingStartedAt = null;
     this.recordingTimerId = null;
     this.statusBarEl = this.addStatusBarItem();
-    this.updateRecordingStatusBar();
+    this.recordingRibbonIconEl = this.addRibbonIcon('mic', 'Start microphone recording', async () => {
+      await this.toggleRecording();
+    });
+    this.updateRecordingUI();
 
     this.addSettingTab(new TemplateDrivenSettingTab(this.app, this));
 
@@ -107,11 +110,7 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
       id: 'toggle-microphone-recording',
       name: 'Toggle microphone recording',
       callback: async () => {
-        if (this.isRecording()) {
-          await this.stopRecording();
-        } else {
-          await this.startRecording();
-        }
+        await this.toggleRecording();
       },
     });
   }
@@ -133,6 +132,11 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
     return !!this.mediaRecorder && this.mediaRecorder.state === 'recording';
   }
 
+  updateRecordingUI() {
+    this.updateRecordingStatusBar();
+    this.updateRecordingRibbon();
+  }
+
   updateRecordingStatusBar() {
     if (!this.statusBarEl) return;
     if (!this.isRecording() || !this.recordingStartedAt) {
@@ -145,9 +149,24 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
     this.statusBarEl.setText(`● Recording ${mm}:${ss}`);
   }
 
+  updateRecordingRibbon() {
+    if (!this.recordingRibbonIconEl) return;
+    if (this.isRecording()) {
+      this.recordingRibbonIconEl.addClass('lightning-simulwhisper-recording-active');
+      this.recordingRibbonIconEl.setAttribute('aria-label', 'Stop microphone recording');
+      this.recordingRibbonIconEl.setAttribute('title', 'Stop microphone recording');
+      setIcon(this.recordingRibbonIconEl, 'square');
+    } else {
+      this.recordingRibbonIconEl.removeClass('lightning-simulwhisper-recording-active');
+      this.recordingRibbonIconEl.setAttribute('aria-label', 'Start microphone recording');
+      this.recordingRibbonIconEl.setAttribute('title', 'Start microphone recording');
+      setIcon(this.recordingRibbonIconEl, 'mic');
+    }
+  }
+
   startRecordingTimer() {
     this.clearRecordingTimer();
-    this.recordingTimerId = window.setInterval(() => this.updateRecordingStatusBar(), 1000);
+    this.recordingTimerId = window.setInterval(() => this.updateRecordingUI(), 1000);
   }
 
   clearRecordingTimer() {
@@ -171,13 +190,7 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
   }
 
   getSupportedRecordingMimeType() {
-    const candidates = [
-      'audio/webm;codecs=opus',
-      'audio/webm',
-      'audio/ogg;codecs=opus',
-      'audio/ogg',
-      'audio/mp4',
-    ];
+    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg', 'audio/mp4'];
     if (typeof MediaRecorder === 'undefined') return '';
     for (const candidate of candidates) {
       if (MediaRecorder.isTypeSupported(candidate)) return candidate;
@@ -190,6 +203,14 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
     if (mimeType.includes('ogg')) return 'ogg';
     if (mimeType.includes('mp4')) return 'm4a';
     return 'webm';
+  }
+
+  async toggleRecording() {
+    if (this.isRecording()) {
+      await this.stopRecording();
+    } else {
+      await this.startRecording();
+    }
   }
 
   async startRecording() {
@@ -209,9 +230,7 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
       this.recordedChunks = [];
       this.mediaRecorder = new MediaRecorder(this.recordingStream, options);
       this.mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          this.recordedChunks.push(event.data);
-        }
+        if (event.data && event.data.size > 0) this.recordedChunks.push(event.data);
       };
       this.mediaRecorder.onerror = (event) => {
         console.error(event);
@@ -220,7 +239,7 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
       this.mediaRecorder.start();
       this.recordingStartedAt = Date.now();
       this.startRecordingTimer();
-      this.updateRecordingStatusBar();
+      this.updateRecordingUI();
       new Notice('Microphone recording started.');
     } catch (error) {
       console.error(error);
@@ -229,7 +248,7 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
       this.recordedChunks = [];
       this.recordingStartedAt = null;
       this.clearRecordingTimer();
-      this.updateRecordingStatusBar();
+      this.updateRecordingUI();
       new Notice(`Failed to start microphone recording: ${error.message}`);
     }
   }
@@ -253,7 +272,7 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
     this.clearRecordingTimer();
     this.stopRecordingTracks();
     this.mediaRecorder = null;
-    this.updateRecordingStatusBar();
+    this.updateRecordingUI();
 
     try {
       const mimeType = recorder.mimeType || this.getSupportedRecordingMimeType() || 'audio/webm';
@@ -270,7 +289,7 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
       new Notice(`Failed to save recording: ${error.message}`);
     } finally {
       this.recordingStartedAt = null;
-      this.updateRecordingStatusBar();
+      this.updateRecordingUI();
     }
   }
 
@@ -278,11 +297,7 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
     const folderPath = (this.settings.recordingFolder || 'Recordings').trim();
     await this.ensureFolderExists(folderPath);
     const now = new Date();
-    const context = {
-      date: this.formatDate(now),
-      time: this.formatTime(now),
-      datetime: this.formatDateTime(now),
-    };
+    const context = { date: this.formatDate(now), time: this.formatTime(now), datetime: this.formatDateTime(now) };
     const baseName = this.renderRecordingFileNamePattern(context).replace(/[^a-zA-Z0-9가-힣._ -]/g, '_');
     const ext = this.getExtensionForMimeType(mimeType);
     const path = this.getAvailableBinaryPath(`${folderPath}/${baseName}.${ext}`);
@@ -322,9 +337,7 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
     const links = cache?.links || [];
     for (const link of links) {
       const destination = this.app.metadataCache.getFirstLinkpathDest(link.link, activeFile.path);
-      if (destination instanceof TFile && AUDIO_EXTENSIONS.has((destination.extension || '').toLowerCase())) {
-        return destination;
-      }
+      if (destination instanceof TFile && AUDIO_EXTENSIONS.has((destination.extension || '').toLowerCase())) return destination;
     }
     return null;
   }
@@ -333,10 +346,7 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), 10000);
     try {
-      const response = await fetch(`${this.settings.serverUrl.replace(/\/$/, '')}/health`, {
-        method: 'GET',
-        signal: controller.signal,
-      });
+      const response = await fetch(`${this.settings.serverUrl.replace(/\/$/, '')}/health`, { method: 'GET', signal: controller.signal });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
     } finally {
@@ -356,9 +366,7 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
       const notePath = await this.createOutputNote(file, rendered, context, outputFolder);
       if (this.settings.openCreatedNote) {
         const created = this.app.vault.getAbstractFileByPath(notePath);
-        if (created instanceof TFile) {
-          await this.app.workspace.getLeaf(true).openFile(created);
-        }
+        if (created instanceof TFile) await this.app.workspace.getLeaf(true).openFile(created);
       }
       new Notice(`Note created: ${notePath}`);
     } catch (error) {
@@ -385,19 +393,13 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), this.settings.requestTimeoutMs);
     try {
-      const response = await fetch(`${this.settings.serverUrl.replace(/\/$/, '')}/v1/transcriptions`, {
-        method: 'POST',
-        body: formData,
-        signal: controller.signal,
-      });
+      const response = await fetch(`${this.settings.serverUrl.replace(/\/$/, '')}/v1/transcriptions`, { method: 'POST', body: formData, signal: controller.signal });
       if (!response.ok) {
         const text = await response.text();
         throw new Error(`HTTP ${response.status}: ${text}`);
       }
       const result = await response.json();
-      if (!result || typeof result.text !== 'string') {
-        throw new Error('Invalid transcription response: missing text');
-      }
+      if (!result || typeof result.text !== 'string') throw new Error('Invalid transcription response: missing text');
       return result;
     } finally {
       window.clearTimeout(timeoutId);
@@ -435,70 +437,12 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
 
   getBuiltInTemplate(mode) {
     if (mode === 'raw') {
-      return [
-        '# {{title}}',
-        '',
-        '- 날짜: {{datetime}}',
-        '- 원본 오디오: [[{{audio_path}}]]',
-        '- 언어: {{language}}',
-        '- 모델: {{model}}',
-        '',
-        '{{raw_heading}}',
-        '{{transcription}}',
-        '',
-      ].join('\n');
+      return ['# {{title}}', '', '- 날짜: {{datetime}}', '- 원본 오디오: [[{{audio_path}}]]', '- 언어: {{language}}', '- 모델: {{model}}', '', '{{raw_heading}}', '{{transcription}}', ''].join('\n');
     }
     if (mode === 'interview') {
-      return [
-        '# {{title}} 인터뷰 정리',
-        '',
-        '## 인터뷰 정보',
-        '- 날짜: {{datetime}}',
-        '- 원본 오디오: [[{{audio_path}}]]',
-        '',
-        '## 핵심 요약',
-        '- ',
-        '',
-        '## 주요 답변',
-        '- ',
-        '',
-        '## 인사이트',
-        '- ',
-        '',
-        '{{raw_heading}}',
-        '{{transcription}}',
-      ].join('\n');
+      return ['# {{title}} 인터뷰 정리', '', '## 인터뷰 정보', '- 날짜: {{datetime}}', '- 원본 오디오: [[{{audio_path}}]]', '', '## 핵심 요약', '- ', '', '## 주요 답변', '- ', '', '## 인사이트', '- ', '', '{{raw_heading}}', '{{transcription}}'].join('\n');
     }
-    return [
-      '# {{title}} 회의록',
-      '',
-      '## 회의 정보',
-      '- 날짜: {{datetime}}',
-      '- 원본 오디오: [[{{audio_path}}]]',
-      '- 언어: {{language}}',
-      '- 모델: {{model}}',
-      '',
-      '## 참석자',
-      '- ',
-      '',
-      '## 안건',
-      '- ',
-      '',
-      '## 주요 논의 사항',
-      '- ',
-      '',
-      '## 결정 사항',
-      '- ',
-      '',
-      '## 액션 아이템',
-      '- 담당자: ',
-      '- 마감일: ',
-      '- 내용: ',
-      '',
-      '{{raw_heading}}',
-      '{{transcription}}',
-      '',
-    ].join('\n');
+    return ['# {{title}} 회의록', '', '## 회의 정보', '- 날짜: {{datetime}}', '- 원본 오디오: [[{{audio_path}}]]', '- 언어: {{language}}', '- 모델: {{model}}', '', '## 참석자', '- ', '', '## 안건', '- ', '', '## 주요 논의 사항', '- ', '', '## 결정 사항', '- ', '', '## 액션 아이템', '- 담당자: ', '- 마감일: ', '- 내용: ', '', '{{raw_heading}}', '{{transcription}}', ''].join('\n');
   }
 
   renderTemplate(template, context) {
@@ -567,9 +511,7 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
     let current = '';
     for (const part of parts) {
       current = current ? `${current}/${part}` : part;
-      if (!this.app.vault.getAbstractFileByPath(current)) {
-        await this.app.vault.createFolder(current);
-      }
+      if (!this.app.vault.getAbstractFileByPath(current)) await this.app.vault.createFolder(current);
     }
   }
 };
@@ -584,10 +526,7 @@ class TemplateDrivenSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl('h2', { text: 'Template Driven Settings' });
-    containerEl.createEl('p', {
-      text: 'Use one transcription pipeline, microphone recording, and template-driven markdown generation.',
-      cls: 'lightning-simulwhisper-setting-note',
-    });
+    containerEl.createEl('p', { text: 'Use one transcription pipeline, microphone recording, and template-driven markdown generation.', cls: 'lightning-simulwhisper-setting-note' });
 
     new Setting(containerEl).setName('Server URL').setDesc('Example: http://127.0.0.1:8765').addText((text) => text.setValue(this.plugin.settings.serverUrl).onChange(async (value) => { this.plugin.settings.serverUrl = value.trim() || DEFAULT_SETTINGS.serverUrl; await this.plugin.saveSettings(); }));
     new Setting(containerEl).setName('Language').setDesc('ko, en, or auto').addText((text) => text.setValue(this.plugin.settings.language).onChange(async (value) => { this.plugin.settings.language = value.trim() || DEFAULT_SETTINGS.language; await this.plugin.saveSettings(); }));

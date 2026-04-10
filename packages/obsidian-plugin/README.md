@@ -9,6 +9,12 @@ export OBSIDIAN_VAULT=/absolute/path/to/YourVault
 make plugin-install
 ```
 
+수정 후 다시 반영할 때는:
+
+```bash
+make plugin-reinstall
+```
+
 ## 전제 조건
 
 - Lightning-SimulWhisper 설치 완료
@@ -41,8 +47,7 @@ make plugin-install
 
 ## 녹음 동작
 
-- 녹음 시작 시 마이크 권한을 요청한다.
-- 녹음 중에는 Obsidian 하단 상태바에 `Recording mm:ss` 형태로 표시된다.
+- 리본의 마이크 아이콘으로 녹음을 토글할 수 있다.
+- 녹음 중에는 상태바와 리본 아이콘이 활성 상태로 보인다.
 - 녹음 파일은 `Recording folder` 아래에 저장된다.
-- 녹음 종료 후 `Auto generate note after recording`이 켜져 있으면 자동 전사와 노트 생성이 이어진다.
-- 이때 생성되는 템플릿 기반 전사 노트는 `Recording note output folder`에 저장된다.
+- 자동 전사가 켜져 있으면 생성 노트는 `Recording note output folder`에 저장된다.

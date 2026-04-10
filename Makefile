@@ -6,7 +6,7 @@ BRIDGE_PORT ?= 8765
 OBSIDIAN_PLUGIN_DIR ?= $(OBSIDIAN_VAULT)/.obsidian/plugins/lightning-simulwhisper-template-driven
 TEMPLATE_DEST_DIR ?= $(OBSIDIAN_VAULT)/Templates
 
-.PHONY: bridge-venv bridge-run bridge-health plugin-install template-install check-vault
+.PHONY: bridge-venv bridge-run bridge-health plugin-install plugin-reinstall template-install check-vault
 
 bridge-venv:
 	$(UV) venv $(VENV_DIR)
@@ -30,6 +30,9 @@ plugin-install: check-vault
 	cp packages/obsidian-plugin/styles.css "$(OBSIDIAN_PLUGIN_DIR)/styles.css"
 	cp packages/obsidian-plugin/versions.json "$(OBSIDIAN_PLUGIN_DIR)/versions.json"
 	@echo "Installed plugin into $(OBSIDIAN_PLUGIN_DIR)"
+
+plugin-reinstall: plugin-install
+	@echo "Reinstalled plugin into $(OBSIDIAN_PLUGIN_DIR)"
 
 template-install: check-vault
 	mkdir -p "$(TEMPLATE_DEST_DIR)"

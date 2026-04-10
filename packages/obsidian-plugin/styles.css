@@ -2,3 +2,7 @@
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
 }
+
+.lightning-simulwhisper-recording-active {
+  color: var(--color-red);
+}

@@ -5,8 +5,11 @@ BRIDGE_HOST ?= 127.0.0.1
 BRIDGE_PORT ?= 8765
 OBSIDIAN_PLUGIN_DIR ?= $(OBSIDIAN_VAULT)/.obsidian/plugins/lightning-simulwhisper-template-driven
 TEMPLATE_DEST_DIR ?= $(OBSIDIAN_VAULT)/Templates
+TRANSCRIPT ?=
+CLAUDE_JSON_OUT ?= claude_postprocess.json
+GUARDRAILS ?= docs/claude-postprocess-guardrails.md
 
-.PHONY: bridge-venv bridge-run bridge-health plugin-install plugin-reinstall template-install check-vault
+.PHONY: bridge-venv bridge-run bridge-health plugin-install plugin-reinstall template-install claude-postprocess check-vault
 
 bridge-venv:
 	$(UV) venv $(VENV_DIR)
@@ -40,3 +43,7 @@ template-install: check-vault
 	cp templates/meeting-note.sample.md "$(TEMPLATE_DEST_DIR)/meeting-note.sample.md"
 	cp templates/interview-note.sample.md "$(TEMPLATE_DEST_DIR)/interview-note.sample.md"
 	@echo "Installed sample templates into $(TEMPLATE_DEST_DIR)"
+
+claude-postprocess:
+	@if [ -z "$(TRANSCRIPT)" ]; then echo "TRANSCRIPT is required"; exit 1; fi
+	node scripts/claude_postprocess.js "$(TRANSCRIPT)" "$(CLAUDE_JSON_OUT)" "$(GUARDRAILS)"

@@ -19,6 +19,7 @@ make plugin-reinstall
 
 - Lightning-SimulWhisper 설치 완료
 - bridge server 실행 완료
+- Claude headless를 사용할 경우 `claude` CLI 사용 가능
 
 자세한 절차는 `docs/quick-start.md`를 본다.
 
@@ -34,6 +35,11 @@ make plugin-reinstall
 - Recording folder
 - Recording file name pattern
 - Auto generate note after recording
+- Post-process with Claude
+- Claude binary
+- Claude timeout (ms)
+- Claude guardrail file path
+- Save raw note before Claude
 - File name pattern
 
 ## 명령
@@ -44,6 +50,13 @@ make plugin-reinstall
 - `Start microphone recording`
 - `Stop microphone recording`
 - `Toggle microphone recording`
+
+## Claude 후처리 동작
+
+- `Post-process with Claude`를 켜면 전사 후 구조화 요약을 시도한다.
+- `Save raw note before Claude`가 켜져 있으면 원문 노트를 먼저 저장한다.
+- Claude 실패 시 원문 전사 기준으로 계속 진행한다.
+- 사용자 지정 가드레일 파일이 없으면 내장 가드레일을 사용한다.
 
 ## 녹음 동작
 

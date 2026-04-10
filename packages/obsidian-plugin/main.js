@@ -1,4 +1,8 @@
 const { Plugin, PluginSettingTab, Setting, Notice, FuzzySuggestModal, TFile, setIcon } = require('obsidian');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+
+const execFileAsync = promisify(execFile);
 
 const DEFAULT_SETTINGS = {
   serverUrl: 'http://127.0.0.1:8765',
@@ -16,9 +20,27 @@ const DEFAULT_SETTINGS = {
   recordingFolder: 'Recordings',
   autoGenerateNoteAfterRecording: true,
   recordingFileNamePattern: '{{date}} {{time}} recording',
+  postProcessWithClaude: false,
+  claudeBinary: 'claude',
+  claudeTimeoutMs: 120000,
+  claudeGuardrailFilePath: '',
+  saveRawNoteBeforeClaude: true,
 };
 
-const AUDIO_EXTENSIONS = new Set(['mp3','wav','m4a','mp4','mpeg','mpga','webm','ogg','flac','aac','opus']);
+const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'm4a', 'mp4', 'mpeg', 'mpga', 'webm', 'ogg', 'flac', 'aac', 'opus']);
+const BUILTIN_GUARDRAILS = [
+  'Use only the provided transcription text.',
+  'Do not invent facts, names, dates, owners, or decisions.',
+  'If a field is unclear, leave it empty rather than guessing.',
+  'If something looks probable but uncertain, mark it as uncertain.',
+  'Never rewrite the raw transcription as evidence. Preserve it separately.',
+  'Keep summaries short and faithful.',
+  'Action items must come only from explicit requests, commitments, or decisions in the transcription.',
+  'If no explicit action item exists, return an empty list.',
+  'If owner or due date is missing, keep that field empty.',
+  'Output must be valid JSON only using this schema:',
+  '{"summary":"","key_points":[],"decisions":[],"action_items":[{"owner":"","task":"","due_date":"","uncertain":false}],"open_questions":[]}'
+].join('\n');
 
 class AudioFileSuggestModal extends FuzzySuggestModal {
   constructor(app, files, onChoose) {
@@ -48,71 +70,39 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
 
     this.addSettingTab(new TemplateDrivenSettingTab(this.app, this));
 
-    this.addCommand({
-      id: 'check-bridge-server-health',
-      name: 'Check bridge server health',
-      callback: async () => {
-        try {
-          const result = await this.checkHealth();
-          new Notice(`Bridge server OK: ${result.status || 'ok'}`);
-        } catch (error) {
-          console.error(error);
-          new Notice(`Bridge server health check failed: ${error.message}`);
-        }
-      },
-    });
+    this.addCommand({ id: 'check-bridge-server-health', name: 'Check bridge server health', callback: async () => {
+      try {
+        const result = await this.checkHealth();
+        new Notice(`Bridge server OK: ${result.status || 'ok'}`);
+      } catch (error) {
+        console.error(error);
+        new Notice(`Bridge server health check failed: ${error.message}`);
+      }
+    }});
 
-    this.addCommand({
-      id: 'generate-note-from-audio-file',
-      name: 'Generate note from audio file',
-      callback: async () => {
-        const files = this.getAudioFiles();
-        if (!files.length) {
-          new Notice('No audio files found in vault.');
-          return;
-        }
-        new AudioFileSuggestModal(this.app, files, async (file) => {
-          await this.generateDocumentFromAudio(file);
-        }).open();
-      },
-    });
-
-    this.addCommand({
-      id: 'generate-note-from-linked-audio',
-      name: 'Generate note from linked audio in active note',
-      callback: async () => {
-        const file = this.findAudioFileFromActiveNote();
-        if (!file) {
-          new Notice('No linked audio file found in active note.');
-          return;
-        }
+    this.addCommand({ id: 'generate-note-from-audio-file', name: 'Generate note from audio file', callback: async () => {
+      const files = this.getAudioFiles();
+      if (!files.length) {
+        new Notice('No audio files found in vault.');
+        return;
+      }
+      new AudioFileSuggestModal(this.app, files, async (file) => {
         await this.generateDocumentFromAudio(file);
-      },
-    });
+      }).open();
+    }});
 
-    this.addCommand({
-      id: 'start-microphone-recording',
-      name: 'Start microphone recording',
-      callback: async () => {
-        await this.startRecording();
-      },
-    });
+    this.addCommand({ id: 'generate-note-from-linked-audio', name: 'Generate note from linked audio in active note', callback: async () => {
+      const file = this.findAudioFileFromActiveNote();
+      if (!file) {
+        new Notice('No linked audio file found in active note.');
+        return;
+      }
+      await this.generateDocumentFromAudio(file);
+    }});
 
-    this.addCommand({
-      id: 'stop-microphone-recording',
-      name: 'Stop microphone recording',
-      callback: async () => {
-        await this.stopRecording();
-      },
-    });
-
-    this.addCommand({
-      id: 'toggle-microphone-recording',
-      name: 'Toggle microphone recording',
-      callback: async () => {
-        await this.toggleRecording();
-      },
-    });
+    this.addCommand({ id: 'start-microphone-recording', name: 'Start microphone recording', callback: async () => { await this.startRecording(); }});
+    this.addCommand({ id: 'stop-microphone-recording', name: 'Stop microphone recording', callback: async () => { await this.stopRecording(); }});
+    this.addCommand({ id: 'toggle-microphone-recording', name: 'Toggle microphone recording', callback: async () => { await this.toggleRecording(); }});
   }
 
   onunload() {
@@ -120,17 +110,9 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
     this.stopRecordingTracks();
   }
 
-  async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-  }
-
-  async saveSettings() {
-    await this.saveData(this.settings);
-  }
-
-  isRecording() {
-    return !!this.mediaRecorder && this.mediaRecorder.state === 'recording';
-  }
+  async loadSettings() { this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()); }
+  async saveSettings() { await this.saveData(this.settings); }
+  isRecording() { return !!this.mediaRecorder && this.mediaRecorder.state === 'recording'; }
 
   updateRecordingUI() {
     this.updateRecordingStatusBar();
@@ -179,11 +161,7 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
   stopRecordingTracks() {
     if (this.recordingStream) {
       for (const track of this.recordingStream.getTracks()) {
-        try {
-          track.stop();
-        } catch (error) {
-          console.error(error);
-        }
+        try { track.stop(); } catch (error) { console.error(error); }
       }
     }
     this.recordingStream = null;
@@ -206,11 +184,8 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
   }
 
   async toggleRecording() {
-    if (this.isRecording()) {
-      await this.stopRecording();
-    } else {
-      await this.startRecording();
-    }
+    if (this.isRecording()) await this.stopRecording();
+    else await this.startRecording();
   }
 
   async startRecording() {
@@ -222,20 +197,14 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
       new Notice('Microphone recording is not supported in this environment.');
       return;
     }
-
     try {
       this.recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mimeType = this.getSupportedRecordingMimeType();
       const options = mimeType ? { mimeType } : undefined;
       this.recordedChunks = [];
       this.mediaRecorder = new MediaRecorder(this.recordingStream, options);
-      this.mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) this.recordedChunks.push(event.data);
-      };
-      this.mediaRecorder.onerror = (event) => {
-        console.error(event);
-        new Notice('Recording error occurred. See console for details.');
-      };
+      this.mediaRecorder.ondataavailable = (event) => { if (event.data && event.data.size > 0) this.recordedChunks.push(event.data); };
+      this.mediaRecorder.onerror = (event) => { console.error(event); new Notice('Recording error occurred. See console for details.'); };
       this.mediaRecorder.start();
       this.recordingStartedAt = Date.now();
       this.startRecordingTimer();
@@ -258,22 +227,15 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
       new Notice('No active recording.');
       return;
     }
-
     const recorder = this.mediaRecorder;
-    await new Promise((resolve, reject) => {
-      recorder.onstop = resolve;
-      recorder.onerror = reject;
-      recorder.stop();
-    }).catch((error) => {
+    await new Promise((resolve, reject) => { recorder.onstop = resolve; recorder.onerror = reject; recorder.stop(); }).catch((error) => {
       console.error(error);
       new Notice(`Failed to stop recording: ${error.message}`);
     });
-
     this.clearRecordingTimer();
     this.stopRecordingTracks();
     this.mediaRecorder = null;
     this.updateRecordingUI();
-
     try {
       const mimeType = recorder.mimeType || this.getSupportedRecordingMimeType() || 'audio/webm';
       const blob = new Blob(this.recordedChunks, { type: mimeType });
@@ -281,9 +243,7 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
       const audioFile = await this.saveRecordingBlob(blob, mimeType);
       this.recordingStartedAt = null;
       new Notice(`Recording saved: ${audioFile.path}`);
-      if (this.settings.autoGenerateNoteAfterRecording) {
-        await this.generateDocumentFromAudio(audioFile, { trigger: 'recording' });
-      }
+      if (this.settings.autoGenerateNoteAfterRecording) await this.generateDocumentFromAudio(audioFile, { trigger: 'recording' });
     } catch (error) {
       console.error(error);
       new Notice(`Failed to save recording: ${error.message}`);
@@ -307,9 +267,7 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
 
   renderRecordingFileNamePattern(context) {
     let output = this.settings.recordingFileNamePattern || '{{date}} {{time}} recording';
-    for (const [key, value] of Object.entries(context)) {
-      output = output.split(`{{${key}}}`).join(String(value ?? ''));
-    }
+    for (const [key, value] of Object.entries(context)) output = output.split(`{{${key}}}`).join(String(value ?? ''));
     return output.trim();
   }
 
@@ -326,9 +284,7 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
     }
   }
 
-  getAudioFiles() {
-    return this.app.vault.getFiles().filter((file) => AUDIO_EXTENSIONS.has((file.extension || '').toLowerCase()));
-  }
+  getAudioFiles() { return this.app.vault.getFiles().filter((file) => AUDIO_EXTENSIONS.has((file.extension || '').toLowerCase())); }
 
   findAudioFileFromActiveNote() {
     const activeFile = this.app.workspace.getActiveFile();
@@ -359,11 +315,23 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
     try {
       const arrayBuffer = await this.app.vault.readBinary(file);
       const transcription = await this.requestTranscription(file, arrayBuffer);
-      const context = this.buildTemplateContext(file, transcription);
+      let context = this.buildTemplateContext(file, transcription);
+      const outputFolder = this.resolveOutputFolder(options);
+
+      if (this.settings.postProcessWithClaude && this.settings.saveRawNoteBeforeClaude) {
+        const rawRendered = this.renderTemplate(this.getRawTemplate(), context);
+        await this.createOutputNote(file, rawRendered, context, outputFolder, ' raw');
+      }
+
+      if (this.settings.postProcessWithClaude) {
+        const structured = await this.runClaudePostprocess(context.transcription);
+        context = this.mergeStructuredContext(context, structured);
+      }
+
       const template = await this.resolveTemplateContent();
       const rendered = this.renderTemplate(template, context);
-      const outputFolder = this.resolveOutputFolder(options);
-      const notePath = await this.createOutputNote(file, rendered, context, outputFolder);
+      const suffix = this.settings.postProcessWithClaude ? ' structured' : '';
+      const notePath = await this.createOutputNote(file, rendered, context, outputFolder, suffix);
       if (this.settings.openCreatedNote) {
         const created = this.app.vault.getAbstractFileByPath(notePath);
         if (created instanceof TFile) await this.app.workspace.getLeaf(true).openFile(created);
@@ -376,9 +344,7 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
   }
 
   resolveOutputFolder(options = {}) {
-    if (options.trigger === 'recording') {
-      return (this.settings.recordingNoteOutputFolder || this.settings.outputFolder || 'Generated Notes').trim();
-    }
+    if (options.trigger === 'recording') return (this.settings.recordingNoteOutputFolder || this.settings.outputFolder || 'Generated Notes').trim();
     return (this.settings.outputFolder || 'Generated Notes').trim();
   }
 
@@ -389,7 +355,6 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
     formData.append('language', this.settings.language);
     formData.append('model', this.settings.model);
     if (this.settings.prompt) formData.append('prompt', this.settings.prompt);
-
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), this.settings.requestTimeoutMs);
     try {
@@ -423,8 +388,71 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
       raw_heading: this.settings.fallbackRawHeading || '## 원문 전사',
       segments_json: JSON.stringify(result.segments || [], null, 2),
       summary: '',
-      action_items: '',
+      key_points: '- ',
+      decisions: '- ',
+      action_items: '- ',
+      open_questions: '- ',
     };
+  }
+
+  async runClaudePostprocess(transcriptionText) {
+    const prompt = [
+      'Return valid JSON only.',
+      'Use this schema:',
+      '{"summary":"","key_points":[],"decisions":[],"action_items":[{"owner":"","task":"","due_date":"","uncertain":false}],"open_questions":[]}',
+      'Transcription:',
+      transcriptionText,
+    ].join('\n\n');
+    const systemPrompt = await this.getClaudeGuardrails();
+    try {
+      const { stdout } = await execFileAsync(this.settings.claudeBinary || 'claude', ['-p', prompt, '--append-system-prompt', systemPrompt, '--output-format', 'json'], {
+        timeout: this.settings.claudeTimeoutMs || 120000,
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      const wrapped = JSON.parse(stdout);
+      const resultText = typeof wrapped.result === 'string' ? wrapped.result : '{}';
+      return JSON.parse(resultText);
+    } catch (error) {
+      console.error(error);
+      new Notice('Claude post-processing failed. Falling back to transcription-only output.');
+      return null;
+    }
+  }
+
+  async getClaudeGuardrails() {
+    const customPath = (this.settings.claudeGuardrailFilePath || '').trim();
+    if (customPath) {
+      const file = this.app.vault.getAbstractFileByPath(customPath);
+      if (file instanceof TFile) return await this.app.vault.read(file);
+    }
+    return BUILTIN_GUARDRAILS;
+  }
+
+  mergeStructuredContext(context, structured) {
+    if (!structured || typeof structured !== 'object') return context;
+    return Object.assign({}, context, {
+      summary: typeof structured.summary === 'string' ? structured.summary : '',
+      key_points: this.renderBulletList(structured.key_points),
+      decisions: this.renderBulletList(structured.decisions),
+      action_items: this.renderActionItems(structured.action_items),
+      open_questions: this.renderBulletList(structured.open_questions),
+    });
+  }
+
+  renderBulletList(items) {
+    if (!Array.isArray(items) || !items.length) return '- ';
+    return items.map((item) => `- ${String(item ?? '').trim()}`).join('\n');
+  }
+
+  renderActionItems(items) {
+    if (!Array.isArray(items) || !items.length) return '- ';
+    return items.map((item) => {
+      const owner = item?.owner || '';
+      const task = item?.task || '';
+      const dueDate = item?.due_date || '';
+      const uncertain = item?.uncertain ? ' (uncertain)' : '';
+      return `- 담당자: ${owner}${uncertain} | 일정: ${dueDate} | 내용: ${task}`;
+    }).join('\n');
   }
 
   async resolveTemplateContent() {
@@ -435,29 +463,29 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
     return this.getBuiltInTemplate(this.settings.templateMode);
   }
 
+  getRawTemplate() {
+    return ['# {{title}} 원문', '', '- 날짜: {{datetime}}', '- 원본 오디오: [[{{audio_path}}]]', '', '{{raw_heading}}', '{{transcription}}', ''].join('\n');
+  }
+
   getBuiltInTemplate(mode) {
-    if (mode === 'raw') {
-      return ['# {{title}}', '', '- 날짜: {{datetime}}', '- 원본 오디오: [[{{audio_path}}]]', '- 언어: {{language}}', '- 모델: {{model}}', '', '{{raw_heading}}', '{{transcription}}', ''].join('\n');
-    }
+    if (mode === 'raw') return this.getRawTemplate();
     if (mode === 'interview') {
-      return ['# {{title}} 인터뷰 정리', '', '## 인터뷰 정보', '- 날짜: {{datetime}}', '- 원본 오디오: [[{{audio_path}}]]', '', '## 핵심 요약', '- ', '', '## 주요 답변', '- ', '', '## 인사이트', '- ', '', '{{raw_heading}}', '{{transcription}}'].join('\n');
+      return ['# {{title}} 인터뷰 정리', '', '## 인터뷰 정보', '- 날짜: {{datetime}}', '- 원본 오디오: [[{{audio_path}}]]', '', '## 핵심 요약', '{{summary}}', '', '## 주요 답변', '{{key_points}}', '', '## 인사이트/결정', '{{decisions}}', '', '## 열린 질문', '{{open_questions}}', '', '{{raw_heading}}', '{{transcription}}'].join('\n');
     }
-    return ['# {{title}} 회의록', '', '## 회의 정보', '- 날짜: {{datetime}}', '- 원본 오디오: [[{{audio_path}}]]', '- 언어: {{language}}', '- 모델: {{model}}', '', '## 참석자', '- ', '', '## 안건', '- ', '', '## 주요 논의 사항', '- ', '', '## 결정 사항', '- ', '', '## 액션 아이템', '- 담당자: ', '- 마감일: ', '- 내용: ', '', '{{raw_heading}}', '{{transcription}}', ''].join('\n');
+    return ['# {{title}} 회의록', '', '## 회의 정보', '- 날짜: {{datetime}}', '- 원본 오디오: [[{{audio_path}}]]', '- 언어: {{language}}', '- 모델: {{model}}', '', '## 요약', '{{summary}}', '', '## 주요 논의 사항', '{{key_points}}', '', '## 결정 사항', '{{decisions}}', '', '## 액션 아이템', '{{action_items}}', '', '## 열린 질문', '{{open_questions}}', '', '{{raw_heading}}', '{{transcription}}', ''].join('\n');
   }
 
   renderTemplate(template, context) {
     let output = template;
-    for (const [key, value] of Object.entries(context)) {
-      output = output.split(`{{${key}}}`).join(String(value ?? ''));
-    }
+    for (const [key, value] of Object.entries(context)) output = output.split(`{{${key}}}`).join(String(value ?? ''));
     return output.trimEnd() + '\n';
   }
 
-  async createOutputNote(sourceFile, content, context, folderPathOverride = null) {
+  async createOutputNote(sourceFile, content, context, folderPathOverride = null, suffix = '') {
     const folderPath = (folderPathOverride || this.settings.outputFolder || 'Generated Notes').trim();
     await this.ensureFolderExists(folderPath);
     const fileNameBase = this.renderFileNamePattern(context);
-    const safeBase = fileNameBase.replace(/[^a-zA-Z0-9가-힣._ -]/g, '_');
+    const safeBase = `${fileNameBase}${suffix}`.replace(/[^a-zA-Z0-9가-힣._ -]/g, '_');
     const notePath = this.getAvailableNotePath(`${folderPath}/${safeBase}.md`);
     await this.app.vault.create(notePath, content);
     return notePath;
@@ -465,9 +493,7 @@ module.exports = class LightningSimulWhisperTemplateDrivenPlugin extends Plugin 
 
   renderFileNamePattern(context) {
     let output = this.settings.fileNamePattern || '{{date}} {{audio_base}}';
-    for (const [key, value] of Object.entries(context)) {
-      output = output.split(`{{${key}}}`).join(String(value ?? ''));
-    }
+    for (const [key, value] of Object.entries(context)) output = output.split(`{{${key}}}`).join(String(value ?? ''));
     return output.trim();
   }
 
@@ -526,8 +552,7 @@ class TemplateDrivenSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl('h2', { text: 'Template Driven Settings' });
-    containerEl.createEl('p', { text: 'Use one transcription pipeline, microphone recording, and template-driven markdown generation.', cls: 'lightning-simulwhisper-setting-note' });
-
+    containerEl.createEl('p', { text: 'Use one transcription pipeline, microphone recording, Claude headless post-processing, and template-driven markdown generation.', cls: 'lightning-simulwhisper-setting-note' });
     new Setting(containerEl).setName('Server URL').setDesc('Example: http://127.0.0.1:8765').addText((text) => text.setValue(this.plugin.settings.serverUrl).onChange(async (value) => { this.plugin.settings.serverUrl = value.trim() || DEFAULT_SETTINGS.serverUrl; await this.plugin.saveSettings(); }));
     new Setting(containerEl).setName('Language').setDesc('ko, en, or auto').addText((text) => text.setValue(this.plugin.settings.language).onChange(async (value) => { this.plugin.settings.language = value.trim() || DEFAULT_SETTINGS.language; await this.plugin.saveSettings(); }));
     new Setting(containerEl).setName('Model').setDesc('Model name forwarded to the bridge server').addText((text) => text.setValue(this.plugin.settings.model).onChange(async (value) => { this.plugin.settings.model = value.trim() || DEFAULT_SETTINGS.model; await this.plugin.saveSettings(); }));
@@ -539,6 +564,11 @@ class TemplateDrivenSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName('Recording folder').setDesc('Vault folder where recorded audio files are saved').addText((text) => text.setValue(this.plugin.settings.recordingFolder).onChange(async (value) => { this.plugin.settings.recordingFolder = value.trim() || DEFAULT_SETTINGS.recordingFolder; await this.plugin.saveSettings(); }));
     new Setting(containerEl).setName('Recording file name pattern').setDesc('Example: {{date}} {{time}} recording').addText((text) => text.setValue(this.plugin.settings.recordingFileNamePattern).onChange(async (value) => { this.plugin.settings.recordingFileNamePattern = value || DEFAULT_SETTINGS.recordingFileNamePattern; await this.plugin.saveSettings(); }));
     new Setting(containerEl).setName('Auto generate note after recording').setDesc('Automatically transcribe and create note when recording stops').addToggle((toggle) => toggle.setValue(!!this.plugin.settings.autoGenerateNoteAfterRecording).onChange(async (value) => { this.plugin.settings.autoGenerateNoteAfterRecording = !!value; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName('Post-process with Claude').setDesc('Run Claude headless after transcription').addToggle((toggle) => toggle.setValue(!!this.plugin.settings.postProcessWithClaude).onChange(async (value) => { this.plugin.settings.postProcessWithClaude = !!value; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName('Claude binary').setDesc('Default: claude').addText((text) => text.setValue(this.plugin.settings.claudeBinary).onChange(async (value) => { this.plugin.settings.claudeBinary = value.trim() || DEFAULT_SETTINGS.claudeBinary; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName('Claude timeout (ms)').setDesc('Timeout for Claude headless post-processing').addText((text) => text.setValue(String(this.plugin.settings.claudeTimeoutMs)).onChange(async (value) => { const parsed = Number(value); this.plugin.settings.claudeTimeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SETTINGS.claudeTimeoutMs; await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName('Claude guardrail file path').setDesc('Optional Vault path to custom guardrails').addText((text) => text.setValue(this.plugin.settings.claudeGuardrailFilePath).onChange(async (value) => { this.plugin.settings.claudeGuardrailFilePath = value.trim(); await this.plugin.saveSettings(); }));
+    new Setting(containerEl).setName('Save raw note before Claude').setDesc('Always save raw transcription note before structured note').addToggle((toggle) => toggle.setValue(!!this.plugin.settings.saveRawNoteBeforeClaude).onChange(async (value) => { this.plugin.settings.saveRawNoteBeforeClaude = !!value; await this.plugin.saveSettings(); }));
     new Setting(containerEl).setName('Open created note').setDesc('Open generated note after creation').addToggle((toggle) => toggle.setValue(!!this.plugin.settings.openCreatedNote).onChange(async (value) => { this.plugin.settings.openCreatedNote = !!value; await this.plugin.saveSettings(); }));
     new Setting(containerEl).setName('Prompt').setDesc('Optional prompt sent with transcription request').addTextArea((text) => text.setValue(this.plugin.settings.prompt).onChange(async (value) => { this.plugin.settings.prompt = value; await this.plugin.saveSettings(); }));
     new Setting(containerEl).setName('Request timeout (ms)').setDesc('Timeout for upload and transcription request').addText((text) => text.setValue(String(this.plugin.settings.requestTimeoutMs)).onChange(async (value) => { const parsed = Number(value); this.plugin.settings.requestTimeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SETTINGS.requestTimeoutMs; await this.plugin.saveSettings(); }));

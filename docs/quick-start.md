@@ -46,13 +46,29 @@ uv pip install coremltools ane_transformers
 
 ## 2. CoreML encoder 준비
 
+CoreML encoder 생성은 `Lightning-SimulWhisper`가 아니라 `whisper.cpp` 공식 흐름을 기준으로 준비하는 것이 안전하다.
+
 ```bash
 git clone https://github.com/ggml-org/whisper.cpp.git
 cd whisper.cpp
-./scripts/generate_coreml_encoder.sh medium
+
+uv python install 3.11
+uv venv --python 3.11 .venv
+source .venv/bin/activate
+
+uv pip install ane_transformers openai-whisper coremltools
+./models/generate-coreml-model.sh medium
+```
+
+정상 생성되면 보통 아래 형태의 결과물이 생긴다.
+
+```text
+models/ggml-medium-encoder.mlmodelc
 ```
 
 ## 3. 엔진 단독 실행 확인
+
+필요하면 생성한 CoreML encoder 경로를 직접 지정한다.
 
 ```bash
 python simulstreaming_whisper.py test.mp3 \
@@ -60,6 +76,8 @@ python simulstreaming_whisper.py test.mp3 \
   --model_name medium \
   --model_path mlx_medium \
   --use_coreml \
+  --coreml_encoder_path /absolute/path/to/whisper.cpp/models/ggml-medium-encoder.mlmodelc \
+  --coreml_compute_units CPU_AND_NE \
   -l CRITICAL
 ```
 
@@ -121,12 +139,13 @@ make template-install
 
 ## 9. 추천 점검 순서
 
-1. 엔진 단독 실행 성공
-2. `make bridge-venv` 성공
-3. `make bridge-run` 성공
-4. `make bridge-health` 성공
-5. `make plugin-install` 성공
-6. `make template-install` 성공
-7. 기존 오디오 파일 기반 노트 생성 성공
-8. 리본 아이콘으로 녹음 시작/종료 성공
-9. 녹음 후 자동 전사 노트 생성 성공
+1. CoreML encoder 생성 성공
+2. 엔진 단독 실행 성공
+3. `make bridge-venv` 성공
+4. `make bridge-run` 성공
+5. `make bridge-health` 성공
+6. `make plugin-install` 성공
+7. `make template-install` 성공
+8. 기존 오디오 파일 기반 노트 생성 성공
+9. 리본 아이콘으로 녹음 시작/종료 성공
+10. 녹음 후 자동 전사 노트 생성 성공
